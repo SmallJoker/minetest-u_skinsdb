@@ -3,36 +3,44 @@
 -- Copyright (c) 2012 cornernote, Dean Montgomery
 -- License: GPLv3
 u_skins = {}
-u_skins.type = { SPRITE=0, MODEL=1 }
+u_skins.type = { SPRITE=0, MODEL=1, ERROR=99 }
 u_skins.pages = {}
 u_skins.u_skins = {}
-u_skins.used_hacky = false -- set to true if used hacky way to update skins
+u_skins.file_save = false
 
 u_skins.get_type = function(texture)
-	if not texture then return end
+	if not texture then return u_skins.type.ERROR end
+	if not u_skins.meta[texture] then
+		return u_skins.type.ERROR
+	end
 	if string.sub(texture,0,string.len("character")) == "character" then
 		return u_skins.type.MODEL
 	end
 	if string.sub(texture,0,string.len("player")) == "player" then
 		return u_skins.type.SPRITE
 	end
+	return u_skins.type.ERROR
 end
 
 u_skins.modpath = minetest.get_modpath("u_skins")
 dofile(u_skins.modpath.."/skinlist.lua")
-dofile(u_skins.modpath.."/meta.lua")
 dofile(u_skins.modpath.."/players.lua")
 
 
 u_skins.update_player_skin = function(player)
-	name = player:get_player_name()
-	if u_skins.get_type(u_skins.u_skins[name]) == u_skins.type.SPRITE then
+	local name = player:get_player_name()
+	local skin_type = u_skins.get_type(u_skins.u_skins[name])
+	if skin_type == u_skins.type.ERROR then
+		u_skins.u_skins[name] = "character_1"
+		skin_type = u_skins.type.MODEL
+	end
+	if skin_type == u_skins.type.SPRITE then
 		player:set_properties({
 			visual = "upright_sprite",
 			textures = {u_skins.u_skins[name]..".png",u_skins.u_skins[name].."_back.png"},
 			visual_size = {x=1, y=2},
 		})
-	elseif u_skins.get_type(u_skins.u_skins[name]) == u_skins.type.MODEL then
+	elseif skin_type == u_skins.type.MODEL then
 		player:set_properties({
 			visual = "mesh",
 			mesh = "character.x",
@@ -40,22 +48,20 @@ u_skins.update_player_skin = function(player)
 			visual_size = {x=1, y=1},
 		})
 	end
-	u_skins.save()
+	u_skins.file_save = true
 end
 
 -- Display Current Skin
 unified_inventory.register_page("u_skins", {
 	get_formspec = function(player)
-		name = player:get_player_name()
+		local name = player:get_player_name()
 		local formspec = "background[0.06,0.99;7.92,7.52;ui_misc_form.png]"
 		if u_skins.get_type(u_skins.u_skins[name]) == u_skins.type.MODEL then
-			formspec = formspec.."image[0,.75;1,2;"..u_skins.u_skins[name].."_preview.png]"
-			if not u_skins.used_hacky then
-				-- player back view
-				formspec = formspec.."image[1,.75;1,2;"..u_skins.u_skins[name].."_preview_back.png]"
-			end
-			formspec = formspec.."label[6,.5;Raw texture:]"
-				.."image[6,1;2,1;"..u_skins.u_skins[name]..".png]"
+			formspec = formspec
+				.. "image[0,.75;1,2;"..u_skins.u_skins[name].."_preview.png]"
+				--.. "image[1,.75;1,2;"..u_skins.u_skins[name].."_preview_back.png]"
+				.. "label[6,.5;Raw texture:]"
+				.. "image[6,1;2,1;"..u_skins.u_skins[name]..".png]"
 			
 		else
 			formspec = formspec
@@ -64,17 +70,17 @@ unified_inventory.register_page("u_skins", {
 		end
 		local meta = u_skins.meta[u_skins.u_skins[name]]
 		if meta then
-			if meta.name then
-				formspec = formspec .. "label[2,.5;Name: "..meta.name.."]"
+			if meta.name ~= "" then
+				formspec = formspec .. "label[2,.5;Name: "..minetest.formspec_escape(meta.name).."]"
 			end
-			if meta.author then
-				formspec = formspec .. "label[2,1;Author: "..meta.author.."]"
+			if meta.author ~= "" then
+				formspec = formspec .. "label[2,1;Author: "..minetest.formspec_escape(meta.author).."]"
 			end
-			if meta.description then
-				formspec = formspec .. "label[2,1.5;"..meta.description.."]"
+			if meta.description ~= "" then
+				formspec = formspec .. "label[2,1.5;"..minetest.formspec_escape(meta.description).."]"
 			end
-			if meta.comment then
-				formspec = formspec .. 'label[2,2;"'..meta.comment..'"]'
+			if meta.comment ~= "" then
+				formspec = formspec .. 'label[2,2;"'..minetest.formspec_escape(meta.comment)..'"]'
 			end
 		end
 
@@ -101,7 +107,7 @@ for x = 0, math.floor(#u_skins.list/16+1) do
 			for i, skin in ipairs(u_skins.list) do
 				if skip < page*16 then skip = skip + 1 else
 					if index < 16 then
-						formspec = formspec .. "image_button["..(index%8)..","..((math.floor(index/8))*2)..";1,2;"..skin
+						formspec = formspec .. "image_button["..(index%8)..","..((math.floor(index/8))*2-0.2)..";1,2;"..skin
 						if u_skins.get_type(skin) == u_skins.type.MODEL then
 							formspec = formspec .. "_preview"
 						end
@@ -112,15 +118,15 @@ for x = 0, math.floor(#u_skins.list/16+1) do
 			end
 			-- prev next page buttons
 			if page > 0 then
-				formspec = formspec .. "button[0,4;1,.5;u_skins_page_"..(page-1)..";<<]"
+				formspec = formspec .. "button[0,3.8;1,.5;u_skins_page_"..(page-1)..";<<]"
 			else
-				formspec = formspec .. "button[0,4;1,.5;u_skins_page_"..page..";<<]"
+				formspec = formspec .. "button[0,3.8;1,.5;u_skins_page_"..page..";<<]"
 			end
-			formspec = formspec .. "button[.75,4;6.5,.5;u_skins_page_"..page..";Page "..(page+1).."/"..math.floor(#u_skins.list/16+1).."]" -- a button is used so text is centered
+			formspec = formspec .. "button[.75,3.8;6.5,.5;u_skins_page_"..page..";Page "..(page+1).."/"..math.floor(#u_skins.list/16+1).."]" -- a button is used so text is centered
 			if index > 16 then
-				formspec = formspec .. "button[7,4;1,.5;u_skins_page_"..(page+1)..";>>]"
+				formspec = formspec .. "button[7,3.8;1,.5;u_skins_page_"..(page+1)..";>>]"
 			else
-				formspec = formspec .. "button[7,4;1,.5;u_skins_page_"..page..";>>]"
+				formspec = formspec .. "button[7,3.8;1,.5;u_skins_page_"..page..";>>]"
 			end
 			return {formspec=formspec}
 		end,
@@ -147,9 +153,13 @@ end)
 
 -- set defaults
 minetest.register_on_joinplayer(function(player)
-	if not u_skins.u_skins[player:get_player_name()] then
-		u_skins.u_skins[player:get_player_name()] = "character_1"
+	local player_name = player:get_player_name()
+	if not u_skins.u_skins[player_name] then
+		u_skins.u_skins[player_name] = "character_1"
+	end
+	if not u_skins.meta[u_skins.u_skins[player_name]] then
+		u_skins.u_skins[player_name] = "character_1"
+		minetest.chat_send_player(player_name, "Skin error: Your skin does no longer exist, please switch to an other!")
 	end
 	u_skins.update_player_skin(player)
 end)
-
