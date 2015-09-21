@@ -1,8 +1,9 @@
 #!/usr/bin/python3
-from http.client import HTTPConnection
+from http.client import HTTPConnection,HTTPException
 import json
 import base64
-import sys
+from contextlib import closing
+import sys,os,shutil
 
 def die(message,code=23):
         print(message,file=sys.stderr)
@@ -14,20 +15,24 @@ metadir = "u_skins/meta/"
 curskin = 0
 pages = None
 
-def replace(path,encoding=None):
+def replace(location,base,encoding=None,path=None):
+    if path is None:
+        path = os.path.join(location,base)
     mode = "wt" if encoding else "wb"
     # an unpredictable temp name only needed for a+rwxt directories
-    tmp = '.'+path+'-tmp'
+    tmp = os.path.join(location,'.'+base+'-tmp')
     def deco(handle):
         with open(tmp,mode,encoding=encoding) as out:
-            yield out
+            handle(out)
         os.rename(tmp,path)
     return deco
 
-def maybeReplace(path,encoding=None):
+def maybeReplace(location,base,encoding=None):
     def deco(handle):
+        path = os.path.join(location,base)
         if os.path.exists(path): return
-        return replace(path,encoding)(handle)	
+        return replace(location,base,encoding=encoding,path=path)(handle)
+    return deco
 
 c = HTTPConnection(server)
 def addpage(page):
@@ -53,33 +58,39 @@ def addpage(page):
     for s in l["skins"]:
         # make sure to increment this, even if the preview exists!
         curskin = curskin + 1
-        preview = skinsdir + "character_" + str(curskin) + "_preview.png"
-        if os.path.exists(preview): continue
+        previewbase = "character_" + str(curskin) + "_preview.png"
+        preview = os.path.join(skinsdir, previewbase)
+        if os.path.exists(preview):
+            print('skin',curskin,'already retrieved')
+            continue
+        print('updating skin',curskin)
         foundOne = True
-        tmp = dest+'-tmp'
-        @maybeReplace(skinsdir + "character_" + str(curskin) + ".png")
+        @maybeReplace(skinsdir, "character_" + str(curskin) + ".png")
         def go(f):
             f.write(base64.b64decode(bytes(s["img"], 'utf-8')))
             f.close()
             
-        @maybeReplace(metadir + "character_" + str(curskin) + ".txt",
+        @maybeReplace(metadir, "character_" + str(curskin) + ".txt",
                       encoding='utf-8')
         def go(f):
             f.write(str(s["name"]) + '\n')
             f.write(str(s["author"]) + '\n')
             f.write(str(s["license"]))
+        url = "/skins/1/" + str(s["id"]) + ".png"
         try:
-            c.request("GET", "/skins/1/" + str(s["id"]) + ".png")
-            r = c.getresponse()
+            c.request("GET", url)
+            with closing(c.getresponse()) as r:
+                if r.status != 200:
+                    print("Error", r.status)
+                    continue
+                @replace(skinsdir,previewbase,path=preview)
+                def go(f):
+                    shutil.copyfileobj(r,f)
         except HTTPException as e:
-            print(type(e),dir(e))
-            raise(e)
-        if r.status != 200:
-            print("Error", r.status)
-            continue
-        @replace(preview)
-        def go(f):
-            shutil.copyfileobj(r,f)
+            die("Couldn't get {} because of a {} (url={})".format(
+                s["id"],
+                e,
+                url))
     if not foundOne:
         print("No skins updated on this page. Seems we're done?")
         raise SystemExit
