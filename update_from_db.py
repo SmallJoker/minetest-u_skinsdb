@@ -6,8 +6,8 @@ from contextlib import closing
 import sys,os,shutil,time
 
 def die(message,code=23):
-	print(message,file=sys.stderr)
-	raise SystemExit(code)
+		print(message,file=sys.stderr)
+		raise SystemExit(code)
 
 server = "minetest.fensta.bplaced.net"
 skinsdir = "u_skins/textures/"
@@ -65,6 +65,7 @@ class Pipeline(list):
 			self.drain()
 	def trydrain(self):		
 		for penguin in self:
+			print('drain',penguin.url)
 			try:
 				penguin.response.begin()
 				penguin.recv(penguin.response)
@@ -73,10 +74,10 @@ class Pipeline(list):
 				return False			
 			except HTTPException as e:
 				die(penguin.diemessage+' '+repr(e)+' (url='+penguin.url+')')
-			self.clear()
-			return True
+		self.clear()
+		return True
 	def drain(self):
-		print('draining pipeline...')
+		print('draining pipeline...',len(self))
 		assert self.sent, "Can't drain without sending the requests!"
 		self.sent = False
 		while self.trydrain() is not True:
@@ -86,6 +87,7 @@ class Pipeline(list):
 			self.reopen()
 	def trysend(self):
 		for penguin in pipeline:
+			print('fill',penguin.url)
 			try:
 				self.c.request("GET", penguin.url)
 				self.c._HTTPConnection__state = _CS_IDLE
@@ -99,7 +101,7 @@ class Pipeline(list):
 		return True
 	def send(self):
 		if self.sent: return
-		print('filling pipeline...')
+		print('filling pipeline...',len(self))
 		while self.trysend() is not True:
 			self.c.close()
 			print('derped resending')
@@ -152,15 +154,19 @@ with Pipeline() as pipeline:
 				f.write(str(s["author"]) + '\n')
 				f.write(str(s["license"]))
 			url = "/skins/1/" + str(s["id"]) + ".png"
-			def tryget(r):			
-				if r.status != 200:
-					print("Error", r.status)
-					return
-				@replace(skinsdir,previewbase,path=preview)
-				def go(f):
-					shutil.copyfileobj(r,f)
+			def closure(skinsdir,previewbase,preview,s):
+				"explanation: python sucks"
+				def tryget(r):
+					print('replacing',s["id"])
+					if r.status != 200:
+						print("Error", r.status)
+						return
+					@replace(skinsdir,previewbase,path=preview)
+					def go(f):
+						shutil.copyfileobj(r,f)
+				return tryget
 					
-			pipeline.append(url,tryget,
+			pipeline.append(url,closure(skinsdir,previewbase,preview,s),
 							"Couldn't get {} because of a".format(
 								s["id"]))
 		if not foundOne:
