@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from http.client import HTTPConnection,HTTPException,BadStatusLine
+from http.client import HTTPConnection,HTTPException,BadStatusLine,_CS_IDLE
 import json
 import base64
 from contextlib import closing
@@ -35,57 +35,72 @@ def maybeReplace(location,base,encoding=None):
 		return replace(location,base,encoding=encoding,path=path)(handle)
 	return deco
 
+class Penguin:
+	"idk"
+	def __init__(self, url, recv, diemessage):
+		self.url = url
+		self.recv = recv
+		self.diemessage = diemessage		
+
 class Pipeline(list):
 	"Gawd why am I being so elaborate?"
 	def __init__(self, threshold=10):
 		"threshold is how many requests in parallel to pipeline"
 		self.threshold = threshold
 		self.sent = True
-	def __enter__(self,*a):
+	def __enter__(self):
 		self.reopen()
-	def __exit__(self):
+		return self
+	def __exit__(self,typ,exn,trace):
+		self.send()
 		self.drain()
 	def reopen(self):
 		self.c = HTTPConnection(server)
 		self.send()
 	def append(self,url,recv,diemessage):
-		super().append((url,recv,diemessage))
+		self.sent = False
+		super().append(Penguin(url,recv,diemessage))
 		if len(self) > self.threshold:			
 			self.send()
 			self.drain()
 	def trydrain(self):		
-		for url,recv,diemessage in self:
+		for penguin in self:
 			try:
-				recv(self.c)
+				penguin.response.begin()
+				penguin.recv(penguin.response)
 			except BadStatusLine as e:
+				print('derped requesting',penguin.url)
 				return False			
 			except HTTPException as e:
-				die(diemessage+' (url='+url+')')
+				die(penguin.diemessage+' '+repr(e)+' (url='+penguin.url+')')
 			self.clear()
 			return True
 	def drain(self):
 		print('draining pipeline...')
 		assert self.sent, "Can't drain without sending the requests!"
 		self.sent = False
-		while trydrain() is not True:
+		while self.trydrain() is not True:
 			self.c.close()
-			print('derped requesting',url)
 			print('drain failed, trying again')
 			time.sleep(1)
 			self.reopen()
 	def trysend(self):
-		for url,_,diemessage in pipeline:
+		for penguin in pipeline:
 			try:
-				self.c.request("GET", url)
+				self.c.request("GET", penguin.url)
+				self.c._HTTPConnection__state = _CS_IDLE
+				penguin.response = self.c.response_class(self.c.sock,
+														 method="GET")
+				# begin LATER so we can send multiple requests w/out response headers
 			except BadStatusLine:
 				return False
 			except HTTPException as e:
-				die(diemessage)
+				die(diemessage+' because of a '+repr(e))
 		return True
 	def send(self):
 		if self.sent: return
 		print('filling pipeline...')
-		while self.tryresend() is not True:
+		while self.trysend() is not True:
 			self.c.close()
 			print('derped resending')
 			time.sleep(1)
@@ -137,23 +152,21 @@ with Pipeline() as pipeline:
 				f.write(str(s["author"]) + '\n')
 				f.write(str(s["license"]))
 			url = "/skins/1/" + str(s["id"]) + ".png"
-			def tryget(c):			
-				with closing(c.getresponse()) as r:
-					if r.status != 200:
-						print("Error", r.status)
-						return
-					@replace(skinsdir,previewbase,path=preview)
-					def go(f):
-						shutil.copyfileobj(r,f)
-				
+			def tryget(r):			
+				if r.status != 200:
+					print("Error", r.status)
+					return
+				@replace(skinsdir,previewbase,path=preview)
+				def go(f):
+					shutil.copyfileobj(r,f)
+					
 			pipeline.append(url,tryget,
-							"Couldn't get {} because of a {}".format(
-								s["id"],
-								e))
+							"Couldn't get {} because of a".format(
+								s["id"]))
 		if not foundOne:
 			print("No skins updated on this page. Seems we're done?")
 			#raise SystemExit
-	addpage(1)
+	addpage(curpage)
 	while pages > curpage:
 		curpage = curpage + 1
 		addpage(curpage)
